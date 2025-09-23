@@ -3,6 +3,7 @@ import RequireAdmin from '@/components/RequireAdmin'
 import { db } from '@/lib/firebase'
 import { addDoc, collection, onSnapshot } from 'firebase/firestore'
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 
 export default function RoundsPage() {
   const [rounds, setRounds] = useState<any[]>([])
@@ -33,8 +34,13 @@ export default function RoundsPage() {
         </div>
         <div className="card">
           <h2 className="font-semibold mb-2">Rondes</h2>
-          <ul className="list-disc pl-5">
-            {rounds.map(r => <li key={r.id}>{r.name} <span className="badge">{r.status}</span></li>)}
+          <ul className="list-disc pl-5 space-y-2">
+            {rounds.map(r => (
+              <li key={r.id} className="flex items-center gap-3">
+                <span>{r.name} <span className="badge">{r.status}</span></span>
+                <Link className="btn" href={`/admin/rounds/${r.id}/drukker`}>Overzicht voor drukker</Link>
+              </li>
+            ))}
           </ul>
         </div>
       </div>
