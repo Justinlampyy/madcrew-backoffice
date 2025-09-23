@@ -1,9 +1,8 @@
 'use client'
 import RequireAdmin from '@/components/RequireAdmin'
-import { db, } from '@/lib/firebase'
+import { db } from '@/lib/firebase'
 import {
-  addDoc, collection, doc, onSnapshot, query, updateDoc, where, serverTimestamp,
-  getDocs
+  addDoc, collection, doc, onSnapshot, query, updateDoc, where, serverTimestamp
 } from 'firebase/firestore'
 import { useEffect, useMemo, useState } from 'react'
 
@@ -24,6 +23,7 @@ type Order = {
   misprint?: boolean
   resold?: boolean
   roundId?: string
+  seq?: number
 }
 
 function toBool(v: any): boolean {
@@ -41,7 +41,6 @@ export default function OrdersPage() {
   const [roundFilter, setRoundFilter] = useState<string>('all')
   const [bufferTx, setBufferTx] = useState<any[]>([])
 
-  // Rounds + Orders live
   useEffect(() => {
     const unsubR = onSnapshot(collection(db,'rounds'), snap => {
       setRounds(snap.docs.map(d => ({ id: d.id, ...d.data() })))
@@ -52,7 +51,6 @@ export default function OrdersPage() {
     return () => { unsubR(); unsubO() }
   }, [])
 
-  // Buffer transacties per ronde
   useEffect(() => {
     if (roundFilter === 'all') {
       const unsub = onSnapshot(collection(db, 'buffer_tx'), (snap) => {
@@ -73,30 +71,36 @@ export default function OrdersPage() {
     return orders.filter(o => o.roundId === roundFilter)
   }, [orders, roundFilter])
 
-  // Totale KPI's inclusief buffer transacties
+  // Sorteer: binnen één ronde op seq; anders op datum
+  const sorted = useMemo(() => {
+    const arr = [...filtered]
+    if (roundFilter !== 'all' && arr.some(o => typeof (o as any).seq === 'number')) {
+      return arr.sort((a: any, b: any) => (a.seq ?? 0) - (b.seq ?? 0))
+    }
+    return arr.sort((a, b) => String(a.date).localeCompare(String(b.date)))
+  }, [filtered, roundFilter])
+
   const kpis = useMemo(() => {
-    const base = filtered.reduce((acc, o) => {
+    const base = sorted.reduce((acc, o) => {
       const t = Number(o.total || 0)
       const m = Number(o.margin || 0)
       acc.omzet += t
       acc.buffer_from_margin += m
       return acc
     }, { omzet: 0, buffer_from_margin: 0 })
-    // extra buffer aanpassingen (misdruk / doorverkoop / correcties)
     const txSum = bufferTx
       .filter(tx => roundFilter === 'all' ? true : tx.roundId === roundFilter)
       .reduce((a, tx) => a + Number(tx.amount || 0), 0)
 
     const buffer = base.buffer_from_margin + txSum
-    const kosten_drukker = Math.max(0, base.omzet - base.buffer_from_margin) // netto inkoop t.o.v. omzet+margin
+    const kosten_drukker = Math.max(0, base.omzet - base.buffer_from_margin)
     return { omzet: base.omzet, buffer, kosten_drukker, tx: txSum, margin: base.buffer_from_margin }
-  }, [filtered, bufferTx, roundFilter])
+  }, [sorted, bufferTx, roundFilter])
 
-  // Helpers
   const costTotals = (o: Order) => {
     const total = Number(o.total || 0)
     const margin = Number(o.margin || 0)
-    const costTotal = Math.max(0, total - margin) // inkoop voor drukker
+    const costTotal = Math.max(0, total - margin)
     const qty = Number(o.qty || 0)
     const unitCost = qty > 0 ? costTotal / qty : 0
     return { costTotal, unitCost }
@@ -113,18 +117,16 @@ export default function OrdersPage() {
     })
   }
 
-  async function addBufferTx(order: Order, type: 'misprint'|'resold'|'adjust', amount: number, note?: string) {
+  async function addBufferTx(o: Order, type: 'misprint'|'resold'|'adjust', amount: number, note?: string) {
     await addDoc(collection(db, 'buffer_tx'), {
-      orderId: order.id || null,
-      roundId: order.roundId || null,
+      orderId: o.id || null,
+      roundId: o.roundId || null,
       type,
       amount: Number(amount || 0),
       note: note || null,
       createdAt: serverTimestamp(),
     })
   }
-
-  // === Acties ===
 
   async function setPaid(o: Order, v: boolean) {
     if (!o.id) return
@@ -146,7 +148,7 @@ export default function OrdersPage() {
 
   async function markMisprint(o: Order) {
     if (!o.id) return
-    if (toBool(o.misprint)) return // al misdruk → niets doen (dubbel voorkomen)
+    if (toBool(o.misprint)) return
     const { costTotal } = costTotals(o)
     await updateDoc(doc(db,'orders', o.id), { misprint: true, misprintAt: new Date() })
     await addBufferTx(o, 'misprint', -costTotal, 'Misdruk – inkoop (vervanging) uit buffer')
@@ -155,10 +157,7 @@ export default function OrdersPage() {
 
   async function markResold(o: Order) {
     if (!o.id) return
-    if (!toBool(o.misprint)) {
-      alert('Deze bestelling staat niet als misdruk. Markeer eerst als misdruk als het om een herdruk/extra stuk gaat.')
-      return
-    }
+    if (!toBool(o.misprint)) { alert('Markeer eerst als misdruk.'); return }
     if (toBool(o.resold)) return
     const { costTotal } = costTotals(o)
     const input = window.prompt('Verkoopbedrag van het misdruk-artikel (laat leeg om alleen kostprijs te compenseren):', '')
@@ -170,7 +169,6 @@ export default function OrdersPage() {
     await auditLog(o.id, o.roundId, 'mark_resold', `Doorverkocht → +${euro(amount)} naar buffer`, { resold: { from: false, to: true }, resoldAmount: amount })
   }
 
-  // UI
   return (
     <RequireAdmin>
       <div className="card mb-4">
@@ -210,7 +208,7 @@ export default function OrdersPage() {
             </tr>
           </thead>
           <tbody>
-            {filtered.map(o => {
+            {sorted.map(o => {
               const { unitCost, costTotal } = costTotals(o)
               return (
                 <tr key={o.id}>
@@ -224,34 +222,21 @@ export default function OrdersPage() {
                   <td>{euro(Number(o.total||0))}</td>
                   <td>{euro(unitCost)}</td>
                   <td>{euro(costTotal)}</td>
-
                   <td>
                     <label className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={toBool(o.paid)}
-                        onChange={(e)=>setPaid(o, e.target.checked)}
-                      />
+                      <input type="checkbox" checked={toBool(o.paid)} onChange={(e)=>setPaid(o, e.target.checked)} />
                       <span>Betaald</span>
                     </label>
                   </td>
                   <td>
                     <label className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={toBool(o.sentToPrinter)}
-                        onChange={(e)=>setSentToPrinter(o, e.target.checked)}
-                      />
+                      <input type="checkbox" checked={toBool(o.sentToPrinter)} onChange={(e)=>setSentToPrinter(o, e.target.checked)} />
                       <span>Naar drukker</span>
                     </label>
                   </td>
                   <td>
                     <label className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={toBool(o.delivered)}
-                        onChange={(e)=>setDelivered(o, e.target.checked)}
-                      />
+                      <input type="checkbox" checked={toBool(o.delivered)} onChange={(e)=>setDelivered(o, e.target.checked)} />
                       <span>Geleverd</span>
                     </label>
                   </td>
@@ -259,22 +244,8 @@ export default function OrdersPage() {
                   <td>{toBool(o.resold) ? 'Ja' : ''}</td>
                   <td className="whitespace-nowrap">
                     <div className="flex flex-wrap gap-2">
-                      <button
-                        className="btn"
-                        disabled={toBool(o.misprint)}
-                        onClick={() => markMisprint(o)}
-                        title={toBool(o.misprint) ? 'Al als misdruk gemarkeerd' : 'Markeer als misdruk'}
-                      >
-                        ⚠️ Misdruk
-                      </button>
-                      <button
-                        className="btn"
-                        disabled={!toBool(o.misprint) || toBool(o.resold)}
-                        onClick={() => markResold(o)}
-                        title={!toBool(o.misprint) ? 'Eerst als misdruk markeren' : (toBool(o.resold) ? 'Al doorverkocht' : 'Markeer doorverkocht')}
-                      >
-                        🔄 Doorverkocht
-                      </button>
+                      <button className="btn" disabled={toBool(o.misprint)} onClick={() => markMisprint(o)} title={toBool(o.misprint) ? 'Al als misdruk' : 'Markeer als misdruk'}>⚠️ Misdruk</button>
+                      <button className="btn" disabled={!toBool(o.misprint) || toBool(o.resold)} onClick={() => markResold(o)} title={!toBool(o.misprint) ? 'Eerst als misdruk' : (toBool(o.resold) ? 'Al doorverkocht' : 'Markeer doorverkocht')}>🔄 Doorverkocht</button>
                     </div>
                   </td>
                 </tr>
