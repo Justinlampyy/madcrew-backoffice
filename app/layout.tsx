@@ -14,6 +14,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <Link href="/admin/rounds">Bestelrondes</Link>
               <Link href="/admin/products">Producten</Link>
               <Link href="/admin/import">Import</Link>
+              <Link href="/admin/misdruk">Misdruk-voorraad</Link>
             </nav>
           </div>
         </header>
