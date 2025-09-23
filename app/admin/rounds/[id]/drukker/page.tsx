@@ -85,29 +85,26 @@ export default function DrukkerOverzichtPage() {
     const margin = 40
     let y = margin
 
+    // Titel
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(14)
     const title = `Productieoverzicht – ${roundName || 'Bestelronde'}`
     doc.text(title, margin, y)
     y += 22
 
-    doc.setFont('helvetica', 'normal')
-    doc.setFontSize(10)
-    doc.text('Dit overzicht bevat alleen inkoop-/drukkerprijzen (geen marges of interne informatie).', margin, y)
-    y += 18
-
+    // Tabel header (zonder extra toelichtingszin)
     const headers = ['Naam klant', 'Product', 'Kleur', 'Maat', 'Aantal', 'Prijs/stuk', 'Totaal']
     const colWidths = [140, 120, 70, 50, 50, 70, 70]
     const startX = margin
-    const headerY = y
 
     doc.setFont('helvetica', 'bold')
     headers.forEach((h, i) => {
       const x = startX + colWidths.slice(0, i).reduce((a, b) => a + b, 0)
-      doc.text(h, x, headerY)
+      doc.text(h, x, y)
     })
     y += 14
     doc.setFont('helvetica', 'normal')
+    doc.setFontSize(10)
 
     const lineHeight = 16
     const maxY = doc.internal.pageSize.getHeight() - margin - 60
@@ -122,6 +119,7 @@ export default function DrukkerOverzichtPage() {
           doc.text(h, x, y)
         })
         doc.setFont('helvetica', 'normal')
+        doc.setFontSize(10)
         y += 14
       }
 
