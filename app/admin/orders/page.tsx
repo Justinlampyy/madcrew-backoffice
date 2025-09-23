@@ -2,10 +2,12 @@
 import RequireAdmin from '@/components/RequireAdmin'
 import { db } from '@/lib/firebase'
 import {
-  addDoc, collection, doc, onSnapshot, query, updateDoc, where, serverTimestamp
+  addDoc, collection, doc, onSnapshot, query, updateDoc, where, serverTimestamp, getDocs
 } from 'firebase/firestore'
 import { useEffect, useMemo, useState } from 'react'
 
+type Product = { id: string; name: string; cost: number; price: number; margin: number }
+type Round = { id: string; name?: string }
 type Order = {
   id?: string
   date?: string
@@ -20,7 +22,6 @@ type Order = {
   paid?: boolean | string
   sentToPrinter?: boolean | string
   delivered?: boolean | string
-  // nieuw:
   misprint?: boolean
   misprint_qty?: number
   resold?: boolean
@@ -47,18 +48,40 @@ function todayYMD() {
 
 export default function OrdersPage() {
   const [orders, setOrders] = useState<Order[]>([])
-  const [rounds, setRounds] = useState<any[]>([])
+  const [rounds, setRounds] = useState<Round[]>([])
+  const [products, setProducts] = useState<Product[]>([])
   const [roundFilter, setRoundFilter] = useState<string>('all')
   const [bufferTx, setBufferTx] = useState<any[]>([])
 
+  // Form state voor nieuwe bestelling
+  const [form, setForm] = useState({
+    roundId: '',
+    date: todayYMD(),
+    customer: '',
+    productId: '',
+    productName: '',
+    color: '',
+    size: '',
+    qty: 1,
+    price: 0,
+    marginPerUnit: 5,
+    isAdminOrder: false,
+  })
+
   useEffect(() => {
     const unsubR = onSnapshot(collection(db,'rounds'), snap => {
-      setRounds(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+      const rs = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }))
+      setRounds(rs)
+      if (!form.roundId && rs.length) setForm(f => ({ ...f, roundId: rs[0].id }))
+    })
+    const unsubP = onSnapshot(collection(db,'products'), snap => {
+      const ps = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })) as Product[]
+      setProducts(ps)
     })
     const unsubO = onSnapshot(collection(db,'orders'), (snap) => {
-      setOrders(snap.docs.map(d => ({ id: d.id, ...d.data() } as Order)))
+      setOrders(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) } as Order)))
     })
-    return () => { unsubR(); unsubO() }
+    return () => { unsubR(); unsubP(); unsubO() }
   }, [])
 
   useEffect(() => {
@@ -76,6 +99,7 @@ export default function OrdersPage() {
     }
   }, [roundFilter])
 
+  // Filter + sortering
   const filtered = useMemo(() => {
     if (roundFilter === 'all') return orders
     return orders.filter(o => o.roundId === roundFilter)
@@ -106,6 +130,7 @@ export default function OrdersPage() {
     return { omzet: base.omzet, buffer, kosten_drukker, tx: txSum, margin: base.buffer_from_margin }
   }, [sorted, bufferTx, roundFilter])
 
+  // Kostprijs helpers
   const unitCostOf = (o: Order) => {
     const total = Number(o.total || 0)
     const margin = Number(o.margin || 0)
@@ -119,6 +144,7 @@ export default function OrdersPage() {
     return { unitCost: unit, costTotal: unit * qty }
   }
 
+  // Audit + buffer
   async function auditLog(orderId: string, roundId: string | undefined, action: string, note?: string, delta?: Record<string, any>) {
     await addDoc(collection(db, 'audit'), {
       orderId,
@@ -129,7 +155,6 @@ export default function OrdersPage() {
       createdAt: serverTimestamp(),
     })
   }
-
   async function addBufferTx(o: Order, type: 'misprint'|'resold'|'adjust', amount: number, note?: string) {
     await addDoc(collection(db, 'buffer_tx'), {
       orderId: o.id || null,
@@ -141,7 +166,7 @@ export default function OrdersPage() {
     })
   }
 
-  // === Status toggles ===
+  // Status toggles
   async function setPaid(o: Order, v: boolean) {
     if (!o.id) return
     await updateDoc(doc(db,'orders', o.id), { paid: v })
@@ -158,7 +183,7 @@ export default function OrdersPage() {
     await auditLog(o.id, o.roundId, 'set_delivered', v ? 'Geleverd = true' : 'Geleverd = false')
   }
 
-  // === Nieuw: misdruk per stuk toevoegen ===
+  // Misdruk / doorverkoop (per stuk)
   async function addMisprintQty(o: Order) {
     if (!o.id) return
     const unit = unitCostOf(o)
@@ -176,7 +201,6 @@ export default function OrdersPage() {
     await auditLog(o.id, o.roundId, 'misprint_add', `Misdruk +${qty}`, { misprint_qty: { from: prev, to: next }, buffer_delta: amount })
   }
 
-  // === Nieuw: doorverkoop registreren ===
   async function addResale(o: Order) {
     if (!o.id) return
     const available = Number(o.misprint_qty || 0) - Number(o.resold_qty || 0)
@@ -193,7 +217,6 @@ export default function OrdersPage() {
     if (!price || !Number.isFinite(price) || price <= 0) { alert('Ongeldig bedrag.'); return }
     const total = price * qty
 
-    // schrijf resale-record
     await addDoc(collection(db,'resales'), {
       orderId: o.id,
       roundId: o.roundId || null,
@@ -214,13 +237,101 @@ export default function OrdersPage() {
     await auditLog(o.id, o.roundId, 'resale_add', `Doorverkoop ${qty}× á ${euro(price)} = ${euro(total)}`, { resold_qty: { from: prev, to: next }, resale: { buyer, qty, price, total } })
   }
 
+  // ===== Nieuwe bestelling: helpers =====
+  function onSelectProduct(id: string) {
+    const p = products.find(x => x.id === id)
+    if (!p) {
+      setForm(f => ({ ...f, productId: '', productName: '', price: 0, marginPerUnit: f.isAdminOrder ? 0 : 5 }))
+      return
+    }
+    setForm(f => ({
+      ...f,
+      productId: id,
+      productName: p.name,
+      price: Number(p.price || 0),
+      marginPerUnit: f.isAdminOrder ? 0 : Number(p.margin ?? 5)
+    }))
+  }
+
+  function onToggleAdminOrder(v: boolean) {
+    setForm(f => ({
+      ...f,
+      isAdminOrder: v,
+      marginPerUnit: v ? 0 : (f.productId ? (products.find(x => x.id === f.productId)?.margin ?? 5) : f.marginPerUnit || 5)
+    }))
+  }
+
+  async function nextSeqForRound(roundId: string) {
+    const qref = query(collection(db,'orders'), where('roundId','==', roundId))
+    const snap = await getDocs(qref)
+    let maxSeq = 0
+    snap.forEach(d => { const s = Number((d.data() as any).seq || 0); if (s > maxSeq) maxSeq = s })
+    return maxSeq + 1
+  }
+
+  async function submitNewOrder(e: React.FormEvent) {
+    e.preventDefault()
+    if (!form.roundId) return alert('Kies een bestelronde.')
+    if (!form.customer.trim()) return alert('Vul klantnaam in.')
+    const productName = form.productName.trim()
+    if (!productName) return alert('Kies of vul een productnaam in.')
+
+    const qty = Math.max(1, Number(form.qty || 1))
+    const price = Number(form.price || 0)
+    const marginPerUnit = Number(form.marginPerUnit || 0)
+    const marginTotal = (form.isAdminOrder ? 0 : marginPerUnit) * qty
+    const total = price * qty
+
+    const seq = await nextSeqForRound(form.roundId)
+
+    const order: any = {
+      date: form.date || todayYMD(),
+      customer: form.customer.trim(),
+      product: productName,
+      color: form.color.trim(),
+      size: form.size.trim(),
+      qty,
+      price,
+      total,
+      paid: false,
+      sentToPrinter: false,
+      delivered: false,
+      misprint: false,
+      misprint_qty: 0,
+      resold: false,
+      resold_qty: 0,
+      margin: marginTotal,
+      roundId: form.roundId,
+      seq,
+    }
+
+    const ref = await addDoc(collection(db,'orders'), order)
+    await auditLog(ref.id, form.roundId, 'order_create', 'Handmatig aangemaakt', { order })
+
+    // form reset maar ronde behouden
+    setForm(f => ({
+      ...f,
+      date: todayYMD(),
+      customer: '',
+      productId: '',
+      productName: '',
+      color: '',
+      size: '',
+      qty: 1,
+      price: 0,
+      marginPerUnit: f.isAdminOrder ? 0 : 5,
+    }))
+    alert('Bestelling toegevoegd.')
+  }
+
   return (
     <RequireAdmin>
+      {/* KPI's */}
       <div className="card mb-4">
         <div className="flex flex-wrap items-center gap-3">
           <select className="select w-auto" value={roundFilter} onChange={e => setRoundFilter(e.target.value)}>
             <option value="all">Alle rondes</option>
-            {rounds.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+            {rounds.map(r => <option key={r.id} value={r.id}>{r.name || r.id}</option>)}
           </select>
           <div className="badge">Totaal omzet: {euro(kpis.omzet)}</div>
           <div className="badge">Buffer (marges + transacties): {euro(kpis.buffer)}</div>
@@ -230,6 +341,67 @@ export default function OrdersPage() {
         </div>
       </div>
 
+      {/* Nieuwe bestelling */}
+      <div className="card mb-4">
+        <h2 className="font-semibold mb-3">Nieuwe bestelling</h2>
+        <form className="grid md:grid-cols-4 gap-3 items-end" onSubmit={submitNewOrder}>
+          <div>
+            <label className="text-sm opacity-70">Bestelronde</label>
+            <select className="select" value={form.roundId} onChange={e=>setForm(f=>({...f, roundId: e.target.value}))}>
+              <option value="">Kies ronde…</option>
+              {rounds.map(r => <option key={r.id} value={r.id}>{r.name || r.id}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-sm opacity-70">Datum</label>
+            <input className="input" type="date" value={form.date} onChange={e=>setForm(f=>({...f, date: e.target.value}))}/>
+          </div>
+          <div>
+            <label className="text-sm opacity-70">Klantnaam</label>
+            <input className="input" value={form.customer} onChange={e=>setForm(f=>({...f, customer: e.target.value}))}/>
+          </div>
+          <div>
+            <label className="text-sm opacity-70">Product (kies om te vullen)</label>
+            <select className="select" value={form.productId} onChange={e=>onSelectProduct(e.target.value)}>
+              <option value="">— selecteer product —</option>
+              {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </div>
+          <div className="md:col-span-2">
+            <label className="text-sm opacity-70">Productnaam (vrij invulbaar)</label>
+            <input className="input" placeholder="Bijv. Hoodie" value={form.productName} onChange={e=>setForm(f=>({...f, productName: e.target.value}))}/>
+          </div>
+          <div>
+            <label className="text-sm opacity-70">Kleur</label>
+            <input className="input" value={form.color} onChange={e=>setForm(f=>({...f, color: e.target.value}))}/>
+          </div>
+            <div>
+            <label className="text-sm opacity-70">Maat</label>
+            <input className="input" value={form.size} onChange={e=>setForm(f=>({...f, size: e.target.value}))}/>
+          </div>
+          <div>
+            <label className="text-sm opacity-70">Aantal</label>
+            <input className="input" type="number" min={1} value={form.qty} onChange={e=>setForm(f=>({...f, qty: Number(e.target.value||1)}))}/>
+          </div>
+          <div>
+            <label className="text-sm opacity-70">Prijs/stuk (€)</label>
+            <input className="input" type="number" step="0.01" value={form.price} onChange={e=>setForm(f=>({...f, price: Number(e.target.value||0)}))}/>
+          </div>
+          <div>
+            <label className="text-sm opacity-70">Marge/buffer per stuk (€)</label>
+            <input className="input" type="number" step="0.01" value={form.marginPerUnit} disabled={form.isAdminOrder} onChange={e=>setForm(f=>({...f, marginPerUnit: Number(e.target.value||0)}))}/>
+          </div>
+          <div className="flex items-center gap-2">
+            <input id="adminOrder" type="checkbox" checked={form.isAdminOrder} onChange={e=>onToggleAdminOrder(e.target.checked)}/>
+            <label htmlFor="adminOrder" className="text-sm">Beheerder-order (marge = €0)</label>
+          </div>
+          <div className="md:col-span-4">
+            <button className="btn" type="submit">Toevoegen</button>
+          </div>
+        </form>
+      </div>
+
+      {/* Orders tabel */}
       <div className="card overflow-auto">
         <table className="table">
           <thead>
@@ -255,7 +427,11 @@ export default function OrdersPage() {
           </thead>
           <tbody>
             {sorted.map(o => {
-              const { unitCost, costTotal } = costTotals(o)
+              const total = Number(o.total || 0)
+              const margin = Number(o.margin || 0)
+              const qty = Number(o.qty || 0)
+              const unitCost = qty > 0 ? Math.max(0, total - margin) / qty : 0
+              const costTotal = unitCost * qty
               const misq = Number(o.misprint_qty || 0)
               const resq = Number(o.resold_qty || 0)
               const stock = Math.max(0, misq - resq)
@@ -268,7 +444,7 @@ export default function OrdersPage() {
                   <td>{o.size}</td>
                   <td>{o.qty}</td>
                   <td>{euro(Number(o.price||0))}</td>
-                  <td>{euro(Number(o.total||0))}</td>
+                  <td>{euro(total)}</td>
                   <td>{euro(unitCost)}</td>
                   <td>{euro(costTotal)}</td>
 
