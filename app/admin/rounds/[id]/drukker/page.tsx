@@ -18,6 +18,7 @@ type Order = {
   total?: number
   margin?: number
   roundId?: string
+  seq?: number
 }
 
 function formatEuro(n: number) {
@@ -36,12 +37,10 @@ export default function DrukkerOverzichtPage() {
     if (!roundId) return
     (async () => {
       setLoading(true)
-      // Haal ronde-naam op
       const rref = doc(collection(db, 'rounds'), String(roundId))
       const rsnap = await getDoc(rref)
       setRoundName(rsnap.exists() ? (rsnap.data()?.name || '') : '')
 
-      // Orders van deze ronde
       const qref = query(collection(db, 'orders'), where('roundId', '==', String(roundId)))
       const osnap = await getDocs(qref)
       setOrders(osnap.docs.map(d => ({ id: d.id, ...d.data() })))
@@ -49,10 +48,19 @@ export default function DrukkerOverzichtPage() {
     })()
   }, [roundId])
 
-  // Voor de drukker: we tonen alleen inkoop (drukker) prijzen.
-  // Inkoop per order = total - margin (want margin is onze buffer). Bij beheerders is margin 0.
+  // Sorteer binnen ronde op seq; anders op datum
+  const ordersSorted = useMemo(() => {
+    const arr = [...orders]
+    if (arr.some((o: any) => typeof o.seq === 'number')) {
+      arr.sort((a: any, b: any) => (a.seq ?? 0) - (b.seq ?? 0))
+    } else {
+      arr.sort((a: any, b: any) => String(a.date).localeCompare(String(b.date)))
+    }
+    return arr
+  }, [orders])
+
   const rows = useMemo(() => {
-    return orders.map((o: Order) => {
+    return ordersSorted.map((o: Order) => {
       const qty = Number(o.qty || 0)
       const total = Number(o.total || 0)
       const margin = Number(o.margin || 0)
@@ -68,17 +76,15 @@ export default function DrukkerOverzichtPage() {
         costTotal,
       }
     })
-  }, [orders])
+  }, [ordersSorted])
 
   const grandTotal = rows.reduce((acc, r) => acc + r.costTotal, 0)
 
   function downloadPdf() {
     const doc = new jsPDF({ unit: 'pt', format: 'a4' })
-    const pageWidth = doc.internal.pageSize.getWidth()
     const margin = 40
     let y = margin
 
-    // Titel
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(14)
     const title = `Productieoverzicht – ${roundName || 'Bestelronde'}`
@@ -90,10 +96,8 @@ export default function DrukkerOverzichtPage() {
     doc.text('Dit overzicht bevat alleen inkoop-/drukkerprijzen (geen marges of interne informatie).', margin, y)
     y += 18
 
-    // Tabel header
     const headers = ['Naam klant', 'Product', 'Kleur', 'Maat', 'Aantal', 'Prijs/stuk', 'Totaal']
-    const colWidths = [140, 120, 70, 50, 50, 70, 70] // som ≈ 570
-    const tableWidth = colWidths.reduce((a, b) => a + b, 0)
+    const colWidths = [140, 120, 70, 50, 50, 70, 70]
     const startX = margin
     const headerY = y
 
@@ -105,16 +109,13 @@ export default function DrukkerOverzichtPage() {
     y += 14
     doc.setFont('helvetica', 'normal')
 
-    // Rijrendering met eenvoudige pagina-omloop
     const lineHeight = 16
-    const maxY = doc.internal.pageSize.getHeight() - margin - 60 // ruimte voor totaal
+    const maxY = doc.internal.pageSize.getHeight() - margin - 60
 
     rows.forEach((r) => {
       if (y > maxY) {
         doc.addPage()
         y = margin
-
-        // herhaal header op nieuwe pagina
         doc.setFont('helvetica', 'bold')
         headers.forEach((h, i) => {
           const x = startX + colWidths.slice(0, i).reduce((a, b) => a + b, 0)
@@ -135,15 +136,13 @@ export default function DrukkerOverzichtPage() {
       ]
       cols.forEach((c, i) => {
         const x = startX + colWidths.slice(0, i).reduce((a, b) => a + b, 0)
-        // truncate simpele manier als tekst te lang is
-        const maxChars = Math.floor(colWidths[i] / 6.2) // ruwe inschatting
+        const maxChars = Math.floor(colWidths[i] / 6.2)
         const val = c.length > maxChars ? c.slice(0, maxChars - 1) + '…' : c
         doc.text(val, x, y)
       })
       y += lineHeight
     })
 
-    // Totaal
     if (y > maxY) {
       doc.addPage()
       y = margin
