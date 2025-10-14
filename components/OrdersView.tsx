@@ -2,12 +2,12 @@
 import { db } from '@/lib/firebase'
 import RequireAdmin from '@/components/RequireAdmin'
 import {
-  addDoc, collection, doc, onSnapshot, query, updateDoc, where, serverTimestamp, getDocs
+  addDoc, collection, deleteDoc, doc, getDocs, onSnapshot, query, serverTimestamp, updateDoc, where
 } from 'firebase/firestore'
 import { useEffect, useMemo, useState } from 'react'
 
 type Product = { id: string; name: string; cost: number; price: number; margin: number }
-type Round = { id: string; name?: string }
+type Round = { id: string; name?: string; status?: string }
 type Order = {
   id?: string
   date?: string
@@ -53,7 +53,7 @@ export default function OrdersView() {
   const [roundFilter, setRoundFilter] = useState<string>('all')
   const [bufferTx, setBufferTx] = useState<any[]>([])
 
-  // Form state
+  // Form nieuwe bestelling
   const [form, setForm] = useState({
     roundId: '',
     date: todayYMD(),
@@ -68,6 +68,21 @@ export default function OrdersView() {
     isAdminOrder: false,
   })
 
+  // Edit modal state
+  const [editing, setEditing] = useState<Order|null>(null)
+  const [editForm, setEditForm] = useState({
+    date: todayYMD(),
+    customer: '',
+    product: '',
+    color: '',
+    size: '',
+    qty: 1,
+    price: 0,
+    marginTotal: 0,
+    adminZeroMargin: false,
+  })
+
+  // ---- subscriptions
   useEffect(() => {
     const unsubR = onSnapshot(collection(db,'rounds'), snap => {
       const rs = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }))
@@ -99,6 +114,7 @@ export default function OrdersView() {
     }
   }, [roundFilter])
 
+  // ---- data views
   const filtered = useMemo(() => {
     if (roundFilter === 'all') return orders
     return orders.filter(o => o.roundId === roundFilter)
@@ -112,6 +128,7 @@ export default function OrdersView() {
     return arr.sort((a, b) => String(a.date).localeCompare(String(b.date)))
   }, [filtered, roundFilter])
 
+  // KPI’s voor huidig filter
   const kpis = useMemo(() => {
     const base = sorted.reduce((acc, o) => {
       const t = Number(o.total || 0)
@@ -129,7 +146,28 @@ export default function OrdersView() {
     return { omzet: base.omzet, buffer, kosten_drukker, tx: txSum, margin: base.buffer_from_margin }
   }, [sorted, bufferTx, roundFilter])
 
-  // Kostprijs helpers
+  // Mini-samenvatting per ronde (grid)
+  const roundCards = useMemo(() => {
+    const byRound = new Map<string, { name: string; omzet: number; margin: number; count: number }>()
+    const roundName = (id: string) => rounds.find(r => r.id === id)?.name || id
+    for (const o of orders) {
+      const id = o.roundId || '—'
+      const entry = byRound.get(id) || { name: roundName(id), omzet: 0, margin: 0, count: 0 }
+      entry.omzet += Number(o.total || 0)
+      entry.margin += Number(o.margin || 0)
+      entry.count += 1
+      byRound.set(id, entry)
+    }
+    // toon eerst open rondes (status==='open'), dan andere; sorteer op naam
+    const enriched = Array.from(byRound.entries()).map(([id, v]) => ({ id, ...v, status: rounds.find(r => r.id===id)?.status || '' }))
+    return enriched.sort((a,b) => {
+      if (a.status === 'open' && b.status !== 'open') return -1
+      if (a.status !== 'open' && b.status === 'open') return 1
+      return (a.name || '').localeCompare(b.name || '')
+    })
+  }, [orders, rounds])
+
+  // helpers
   const unitCostOf = (o: Order) => {
     const total = Number(o.total || 0)
     const margin = Number(o.margin || 0)
@@ -143,7 +181,7 @@ export default function OrdersView() {
     return { unitCost: unit, costTotal: unit * qty }
   }
 
-  // Audit + buffer
+  // audit + buffer
   async function auditLog(orderId: string, roundId: string | undefined, action: string, note?: string, delta?: Record<string, any>) {
     await addDoc(collection(db, 'audit'), {
       orderId,
@@ -165,7 +203,7 @@ export default function OrdersView() {
     })
   }
 
-  // Status toggles
+  // status toggles
   async function setPaid(o: Order, v: boolean) {
     if (!o.id) return
     await updateDoc(doc(db,'orders', o.id), { paid: v })
@@ -182,7 +220,7 @@ export default function OrdersView() {
     await auditLog(o.id, o.roundId, 'set_delivered', v ? 'Geleverd = true' : 'Geleverd = false')
   }
 
-  // Misdruk / doorverkoop (per stuk)
+  // misdruk / doorverkoop
   async function addMisprintQty(o: Order) {
     if (!o.id) return
     const unit = unitCostOf(o)
@@ -236,7 +274,7 @@ export default function OrdersView() {
     await auditLog(o.id, o.roundId, 'resale_add', `Doorverkoop ${qty}× á ${euro(price)} = ${euro(total)}`, { resold_qty: { from: prev, to: next }, resale: { buyer, qty, price, total } })
   }
 
-  // Nieuwe bestelling helpers
+  // nieuwe bestelling helpers
   function onSelectProduct(id: string) {
     const p = products.find(x => x.id === id)
     if (!p) {
@@ -319,9 +357,85 @@ export default function OrdersView() {
     alert('Bestelling toegevoegd.')
   }
 
+  // ---- Edit/Delete ----
+  function openEdit(o: Order) {
+    setEditing(o)
+    setEditForm({
+      date: String(o.date || todayYMD()),
+      customer: String(o.customer || ''),
+      product: String(o.product || ''),
+      color: String(o.color || ''),
+      size: String(o.size || ''),
+      qty: Number(o.qty || 1),
+      price: Number(o.price || 0),
+      marginTotal: Number(o.margin || 0),
+      adminZeroMargin: Number(o.margin || 0) === 0,
+    })
+  }
+  async function saveEdit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!editing?.id) return
+    const qty = Math.max(1, Number(editForm.qty || 1))
+    const price = Number(editForm.price || 0)
+    const marginTotal = editForm.adminZeroMargin ? 0 : Number(editForm.marginTotal || 0)
+    const total = price * qty
+
+    const delta = {
+      date: editForm.date,
+      customer: editForm.customer.trim(),
+      product: editForm.product.trim(),
+      color: editForm.color.trim(),
+      size: editForm.size.trim(),
+      qty,
+      price,
+      total,
+      margin: marginTotal,
+    }
+    await updateDoc(doc(db,'orders', editing.id), delta)
+    await auditLog(editing.id, editing.roundId, 'order_edit', 'Handmatig aangepast', { delta })
+    setEditing(null)
+  }
+  async function deleteOrder(o: Order) {
+    if (!o.id) return
+    if (!confirm('Weet je zeker dat je deze bestelling wilt verwijderen? Gekoppelde buffer-transacties en doorverkopen worden ook verwijderd.')) return
+
+    // verwijder gekoppelde buffer_tx en resales
+    const txQ = query(collection(db,'buffer_tx'), where('orderId','==', o.id))
+    const txSnap = await getDocs(txQ)
+    for (const d of txSnap.docs) await deleteDoc(d.ref)
+
+    const rsQ = query(collection(db,'resales'), where('orderId','==', o.id))
+    const rsSnap = await getDocs(rsQ)
+    for (const d of rsSnap.docs) await deleteDoc(d.ref)
+
+    await deleteDoc(doc(db,'orders', o.id))
+    await auditLog(o.id, o.roundId, 'order_delete', 'Bestelling + gekoppelde transacties verwijderd', null)
+  }
+
   return (
     <RequireAdmin>
-      {/* KPI's */}
+      {/* Ronde samenvatting (mini-cards) */}
+      <div className="grid gap-3 md:grid-cols-3 mb-4">
+        {roundCards.map(rc => (
+          <div key={rc.id} className="card">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="font-semibold">{rc.name}</div>
+                <div className="text-xs opacity-60">{rc.status === 'open' ? 'Open' : (rc.status || 'Ronde')}</div>
+              </div>
+              <button className="btn text-xs" onClick={()=>setRoundFilter(rc.id)}>Filter</button>
+            </div>
+            <div className="mt-2 flex flex-wrap gap-2 text-sm">
+              <span className="badge">Bestellingen: {rc.count}</span>
+              <span className="badge">Omzet: {euro(rc.omzet)}</span>
+              <span className="badge">Marge: {euro(rc.margin)}</span>
+              <span className="badge">Kosten drukker: {euro(Math.max(0, rc.omzet - rc.margin))}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* KPI's voor huidig filter */}
       <div className="card mb-4">
         <div className="flex flex-wrap items-center gap-3">
           <select className="select w-auto" value={roundFilter} onChange={e => setRoundFilter(e.target.value)}>
@@ -468,8 +582,10 @@ export default function OrdersView() {
 
                   <td className="whitespace-nowrap">
                     <div className="flex flex-wrap gap-2">
+                      <button className="btn" onClick={() => openEdit(o)}>✏️ Bewerken</button>
                       <button className="btn" onClick={() => addMisprintQty(o)}>⚠️ Misdruk +</button>
                       <button className="btn" disabled={stock <= 0} onClick={() => addResale(o)} title={stock<=0?'Geen misdruk-voorraad':''}>🔄 Doorverkoop +</button>
+                      <button className="btn" onClick={() => deleteOrder(o)}>🗑 Verwijderen</button>
                     </div>
                   </td>
                 </tr>
@@ -478,6 +594,63 @@ export default function OrdersView() {
           </tbody>
         </table>
       </div>
+
+      {/* Edit modal */}
+      {editing && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-neutral-900 rounded-2xl p-4 w-[680px] max-w-[95vw] shadow-xl">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-semibold">Bestelling bewerken</h3>
+              <button className="btn" onClick={()=>setEditing(null)}>✖</button>
+            </div>
+            <form className="grid md:grid-cols-3 gap-3" onSubmit={saveEdit}>
+              <div>
+                <label className="text-sm opacity-70">Datum</label>
+                <input className="input" type="date" value={editForm.date} onChange={e=>setEditForm(f=>({...f, date: e.target.value}))}/>
+              </div>
+              <div className="md:col-span-2">
+                <label className="text-sm opacity-70">Klantnaam</label>
+                <input className="input" value={editForm.customer} onChange={e=>setEditForm(f=>({...f, customer: e.target.value}))}/>
+              </div>
+              <div className="md:col-span-3">
+                <label className="text-sm opacity-70">Product</label>
+                <input className="input" value={editForm.product} onChange={e=>setEditForm(f=>({...f, product: e.target.value}))}/>
+              </div>
+              <div>
+                <label className="text-sm opacity-70">Kleur</label>
+                <input className="input" value={editForm.color} onChange={e=>setEditForm(f=>({...f, color: e.target.value}))}/>
+              </div>
+              <div>
+                <label className="text-sm opacity-70">Maat</label>
+                <input className="input" value={editForm.size} onChange={e=>setEditForm(f=>({...f, size: e.target.value}))}/>
+              </div>
+              <div>
+                <label className="text-sm opacity-70">Aantal</label>
+                <input className="input" type="number" min={1} value={editForm.qty} onChange={e=>setEditForm(f=>({...f, qty: Number(e.target.value||1)}))}/>
+              </div>
+              <div>
+                <label className="text-sm opacity-70">Prijs/stuk (€)</label>
+                <input className="input" type="number" step="0.01" value={editForm.price} onChange={e=>setEditForm(f=>({...f, price: Number(e.target.value||0)}))}/>
+              </div>
+              <div>
+                <label className="text-sm opacity-70">Marge totaal (€)</label>
+                <input className="input" type="number" step="0.01" disabled={editForm.adminZeroMargin} value={editForm.marginTotal} onChange={e=>setEditForm(f=>({...f, marginTotal: Number(e.target.value||0)}))}/>
+                <label className="flex items-center gap-2 mt-2 text-sm">
+                  <input type="checkbox" checked={editForm.adminZeroMargin} onChange={e=>setEditForm(f=>({...f, adminZeroMargin: e.target.checked}))}/>
+                  Marge op 0 zetten (beheerder-order)
+                </label>
+              </div>
+              <div className="md:col-span-3 flex justify-end gap-2 mt-2">
+                <button type="button" className="btn" onClick={()=>setEditing(null)}>Annuleren</button>
+                <button type="submit" className="btn">Opslaan</button>
+              </div>
+            </form>
+            <div className="mt-2 text-xs opacity-60">
+              Tip: de bestelronde kan hier niet worden gewijzigd (behoudt volgorde/seq). Verwijder en voeg opnieuw toe als je van ronde wilt wisselen.
+            </div>
+          </div>
+        </div>
+      )}
     </RequireAdmin>
   )
 }
