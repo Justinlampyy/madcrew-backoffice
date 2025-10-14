@@ -10,7 +10,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <Link href="/" className="font-semibold">MadCrew Backoffice</Link>
             <nav className="flex gap-3 text-sm">
               <Link href="/admin">Dashboard</Link>
-              <Link href="/admin/orders">Bestellingen</Link>
               <Link href="/admin/rounds">Bestelrondes</Link>
               <Link href="/admin/products">Producten</Link>
               <Link href="/admin/import">Import</Link>
