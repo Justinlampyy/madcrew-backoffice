@@ -409,7 +409,7 @@ export default function OrdersView() {
     for (const d of rsSnap.docs) await deleteDoc(d.ref)
 
     await deleteDoc(doc(db,'orders', o.id))
-    await auditLog(o.id, o.roundId, 'order_delete', 'Bestelling + gekoppelde transacties verwijderd', null)
+    await auditLog(o.id, o.roundId, 'order_delete', 'Bestelling + gekoppelde transacties verwijderd')
   }
 
   return (
