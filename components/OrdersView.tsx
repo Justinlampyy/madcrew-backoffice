@@ -37,12 +37,6 @@ function extractRoundNumber(name?: string): number | null {
   return m ? Number(m[1]) : null
 }
 
-// — view state voor weergave & paginatie —
-const [showAllRounds, setShowAllRounds] = useState(false)
-const [roundViewMode, setRoundViewMode] = useState<'cards'|'list'>('cards')
-const [page, setPage] = useState(1)
-const perPage = 20
-
 function toBool(v: any): boolean {
   if (typeof v === 'boolean') return v
   if (typeof v === 'string') return v.trim().toLowerCase() === 'ja'
@@ -60,6 +54,12 @@ function todayYMD() {
 }
 
 export default function OrdersView() {
+  // — view state voor weergave & paginatie — (MÓET binnen het component!)
+  const [showAllRounds, setShowAllRounds] = useState(false)
+  const [roundViewMode, setRoundViewMode] = useState<'cards'|'list'>('cards')
+  const [page, setPage] = useState(1)
+  const perPage = 20
+
   const [orders, setOrders] = useState<Order[]>([])
   const [rounds, setRounds] = useState<Round[]>([])
   const [products, setProducts] = useState<Product[]>([])
@@ -161,66 +161,66 @@ export default function OrdersView() {
 
   // Mini-samenvatting per ronde (grid)
   const roundCards = useMemo(() => {
-  // aggregeer per ronde
-  const byRound = new Map<string, {
-    id: string
-    name: string
-    status: string
-    createdAt?: number
-    omzet: number
-    margin: number
-    count: number
-    numHint?: number | null
-  }>()
-  const roundMeta = new Map(rounds.map(r => [r.id, r as any]))
+    // aggregeer per ronde
+    const byRound = new Map<string, {
+      id: string
+      name: string
+      status: string
+      createdAt?: number
+      omzet: number
+      margin: number
+      count: number
+      numHint?: number | null
+    }>()
+    const roundMeta = new Map(rounds.map(r => [r.id, r as any]))
 
-  for (const o of orders) {
-    const id = o.roundId || '—'
-    const meta = roundMeta.get(id) || {}
-    const name = meta.name || id
-    const status = meta.status || ''
-    const createdAt =
-      meta.createdAt?.toMillis ? meta.createdAt.toMillis() :
-      (typeof meta.createdAt === 'number' ? meta.createdAt : undefined)
+    for (const o of orders) {
+      const id = o.roundId || '—'
+      const meta = roundMeta.get(id) || {}
+      const name = meta.name || id
+      const status = meta.status || ''
+      const createdAt =
+        meta.createdAt?.toMillis ? meta.createdAt.toMillis() :
+        (typeof meta.createdAt === 'number' ? meta.createdAt : undefined)
 
-    const key = id
-    const cur = byRound.get(key) || {
-      id,
-      name,
-      status,
-      createdAt,
-      omzet: 0,
-      margin: 0,
-      count: 0,
-      numHint: extractRoundNumber(name),
-    }
-    cur.omzet += Number(o.total || 0)
-    cur.margin += Number(o.margin || 0)
-    cur.count += 1
-    byRound.set(key, cur)
-  }
-
-  const list = Array.from(byRound.values())
-
-  // sorteer: open eerst; dan createdAt desc; dan nummer desc; dan naam
-  list.sort((a, b) => {
-    const ao = a.status === 'open' ? 0 : 1
-    const bo = b.status === 'open' ? 0 : 1
-    if (ao !== bo) return ao - bo
-
-    if (a.createdAt && b.createdAt && a.createdAt !== b.createdAt) {
-      return b.createdAt - a.createdAt // nieuw → oud
+      const key = id
+      const cur = byRound.get(key) || {
+        id,
+        name,
+        status,
+        createdAt,
+        omzet: 0,
+        margin: 0,
+        count: 0,
+        numHint: extractRoundNumber(name),
+      }
+      cur.omzet += Number(o.total || 0)
+      cur.margin += Number(o.margin || 0)
+      cur.count += 1
+      byRound.set(key, cur)
     }
 
-    if (a.numHint != null && b.numHint != null && a.numHint !== b.numHint) {
-      return b.numHint - a.numHint // 12 vóór 11
-    }
+    const list = Array.from(byRound.values())
 
-    return (a.name || '').localeCompare(b.name || '')
-  })
+    // sorteer: open eerst; dan createdAt desc; dan nummer desc; dan naam
+    list.sort((a, b) => {
+      const ao = a.status === 'open' ? 0 : 1
+      const bo = b.status === 'open' ? 0 : 1
+      if (ao !== bo) return ao - bo
 
-  return list
-}, [orders, rounds])
+      if (a.createdAt && b.createdAt && a.createdAt !== b.createdAt) {
+        return b.createdAt - a.createdAt // nieuw → oud
+      }
+
+      if (a.numHint != null && b.numHint != null && a.numHint !== b.numHint) {
+        return b.numHint - a.numHint // 12 vóór 11
+      }
+
+      return (a.name || '').localeCompare(b.name || '')
+    })
+
+    return list
+  }, [orders, rounds])
 
   // helpers
   const unitCostOf = (o: Order) => {
@@ -469,139 +469,136 @@ export default function OrdersView() {
 
   return (
     <RequireAdmin>
-{/* Ronde samenvatting */}
-<div className="card mb-3">
-  <div className="flex flex-wrap items-center gap-3 justify-between">
-    <div className="flex items-center gap-3">
-      <strong>Bestelrondes</strong>
-      <span className="badge">Totaal: {roundCards.length}</span>
-    </div>
-    <div className="flex flex-wrap items-center gap-2">
-      <label className="flex items-center gap-2 text-sm">
-        <input
-          type="checkbox"
-          checked={showAllRounds}
-          onChange={e => { setShowAllRounds(e.target.checked); setPage(1) }}
-        />
-        Toon alle rondes
-      </label>
-      <select
-        className="select"
-        value={roundViewMode}
-        onChange={e => setRoundViewMode(e.target.value as any)}
-        disabled={!showAllRounds}
-        title={!showAllRounds ? 'Alleen actief bij “Toon alle rondes”.' : ''}
-      >
-        <option value="cards">Kaarten</option>
-        <option value="list">Compacte lijst</option>
-      </select>
-    </div>
-  </div>
-</div>
+      {/* Ronde samenvatting */}
+      <div className="card mb-3">
+        <div className="flex flex-wrap items-center gap-3 justify-between">
+          <div className="flex items-center gap-3">
+            <strong>Bestelrondes</strong>
+            <span className="badge">Totaal: {roundCards.length}</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={showAllRounds}
+                onChange={e => { setShowAllRounds(e.target.checked); setPage(1) }}
+              />
+              Toon alle rondes
+            </label>
+            <select
+              className="select"
+              value={roundViewMode}
+              onChange={e => setRoundViewMode(e.target.value as any)}
+              disabled={!showAllRounds}
+              title={!showAllRounds ? 'Alleen actief bij “Toon alle rondes”.' : ''}
+            >
+              <option value="cards">Kaarten</option>
+              <option value="list">Compacte lijst</option>
+            </select>
+          </div>
+        </div>
+      </div>
 
-{!showAllRounds ? (
-  // Open rondes + laatste 6 gesloten als kaarten
-  (() => {
-    const open = roundCards.filter(r => r.status === 'open')
-    const closed = roundCards.filter(r => r.status !== 'open')
-    const subset = [...open, ...closed.slice(0, 6)]
-    return (
-      <div className="grid gap-3 md:grid-cols-3 mb-4">
-        {subset.map(rc => (
-          <div key={rc.id} className="card">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="font-semibold">{rc.name}</div>
-                <div className="text-xs opacity-60">{rc.status || 'Ronde'}</div>
-              </div>
-              <button className="btn text-xs" onClick={()=>setRoundFilter(rc.id)}>Filter</button>
-            </div>
-            <div className="mt-2 flex flex-wrap gap-2 text-sm">
-              <span className="badge">Bestellingen: {rc.count}</span>
-              <span className="badge">Omzet: {euro(rc.omzet)}</span>
-              <span className="badge">Marge: {euro(rc.margin)}</span>
-              <span className="badge">Kosten drukker: {euro(Math.max(0, rc.omzet - rc.margin))}</span>
-            </div>
-          </div>
-        ))}
-      </div>
-    )
-  })()
-) : roundViewMode === 'cards' ? (
-  // Alle rondes als kaarten (kan veel zijn)
-  <div className="grid gap-3 md:grid-cols-3 mb-4">
-    {roundCards.map(rc => (
-      <div key={rc.id} className="card">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="font-semibold">{rc.name}</div>
-            <div className="text-xs opacity-60">{rc.status || 'Ronde'}</div>
-          </div>
-          <button className="btn text-xs" onClick={()=>setRoundFilter(rc.id)}>Filter</button>
-        </div>
-        <div className="mt-2 flex flex-wrap gap-2 text-sm">
-          <span className="badge">Bestellingen: {rc.count}</span>
-          <span className="badge">Omzet: {euro(rc.omzet)}</span>
-          <span className="badge">Marge: {euro(rc.margin)}</span>
-          <span className="badge">Kosten drukker: {euro(Math.max(0, rc.omzet - rc.margin))}</span>
-        </div>
-      </div>
-    ))}
-  </div>
-) : (
-  // Alle rondes als compacte lijst met paginatie
-  (() => {
-    const total = roundCards.length
-    const start = (page - 1) * perPage
-    const end = Math.min(start + perPage, total)
-    const pageItems = roundCards.slice(start, end)
-    const totalPages = Math.max(1, Math.ceil(total / perPage))
-    return (
-      <div className="card mb-4">
-        <div className="flex items-center justify-between mb-3">
-          <div className="text-sm opacity-70">
-            Ronde {start + 1}–{end} van {total}
-          </div>
-          <div className="flex items-center gap-2">
-            <button className="btn" disabled={page<=1} onClick={()=>setPage(p=>Math.max(1,p-1))}>← Vorige</button>
-            <span className="text-sm">Pagina {page}/{totalPages}</span>
-            <button className="btn" disabled={page>=totalPages} onClick={()=>setPage(p=>Math.min(totalPages,p+1))}>Volgende →</button>
-          </div>
-        </div>
-        <div className="overflow-auto">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Ronde</th>
-                <th>Status</th>
-                <th>Bestellingen</th>
-                <th>Omzet</th>
-                <th>Marge</th>
-                <th>Kosten drukker</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {pageItems.map(rc => (
-                <tr key={rc.id}>
-                  <td>{rc.name}</td>
-                  <td>{rc.status || '—'}</td>
-                  <td>{rc.count}</td>
-                  <td>{euro(rc.omzet)}</td>
-                  <td>{euro(rc.margin)}</td>
-                  <td>{euro(Math.max(0, rc.omzet - rc.margin))}</td>
-                  <td className="text-right">
+      {!showAllRounds ? (
+        (() => {
+          const open = roundCards.filter(r => r.status === 'open')
+          const closed = roundCards.filter(r => r.status !== 'open')
+          const subset = [...open, ...closed.slice(0, 6)]
+          return (
+            <div className="grid gap-3 md:grid-cols-3 mb-4">
+              {subset.map(rc => (
+                <div key={rc.id} className="card">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="font-semibold">{rc.name}</div>
+                      <div className="text-xs opacity-60">{rc.status || 'Ronde'}</div>
+                    </div>
                     <button className="btn text-xs" onClick={()=>setRoundFilter(rc.id)}>Filter</button>
-                  </td>
-                </tr>
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-2 text-sm">
+                    <span className="badge">Bestellingen: {rc.count}</span>
+                    <span className="badge">Omzet: {euro(rc.omzet)}</span>
+                    <span className="badge">Marge: {euro(rc.margin)}</span>
+                    <span className="badge">Kosten drukker: {euro(Math.max(0, rc.omzet - rc.margin))}</span>
+                  </div>
+                </div>
               ))}
-            </tbody>
-          </table>
+            </div>
+          )
+        })()
+      ) : roundViewMode === 'cards' ? (
+        <div className="grid gap-3 md:grid-cols-3 mb-4">
+          {roundCards.map(rc => (
+            <div key={rc.id} className="card">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="font-semibold">{rc.name}</div>
+                  <div className="text-xs opacity-60">{rc.status || 'Ronde'}</div>
+                </div>
+                <button className="btn text-xs" onClick={()=>setRoundFilter(rc.id)}>Filter</button>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2 text-sm">
+                <span className="badge">Bestellingen: {rc.count}</span>
+                <span className="badge">Omzet: {euro(rc.omzet)}</span>
+                <span className="badge">Marge: {euro(rc.margin)}</span>
+                <span className="badge">Kosten drukker: {euro(Math.max(0, rc.omzet - rc.margin))}</span>
+              </div>
+            </div>
+          ))}
         </div>
-      </div>
-    )
-  })()
-)}
+      ) : (
+        (() => {
+          const total = roundCards.length
+          const start = (page - 1) * perPage
+          const end = Math.min(start + perPage, total)
+          const pageItems = roundCards.slice(start, end)
+          const totalPages = Math.max(1, Math.ceil(total / perPage))
+          return (
+            <div className="card mb-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="text-sm opacity-70">
+                  Ronde {start + 1}–{end} van {total}
+                </div>
+                <div className="flex items-center gap-2">
+                  <button className="btn" disabled={page<=1} onClick={()=>setPage(p=>Math.max(1,p-1))}>← Vorige</button>
+                  <span className="text-sm">Pagina {page}/{totalPages}</span>
+                  <button className="btn" disabled={page>=totalPages} onClick={()=>setPage(p=>Math.min(totalPages,p+1))}>Volgende →</button>
+                </div>
+              </div>
+              <div className="overflow-auto">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Ronde</th>
+                      <th>Status</th>
+                      <th>Bestellingen</th>
+                      <th>Omzet</th>
+                      <th>Marge</th>
+                      <th>Kosten drukker</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pageItems.map(rc => (
+                      <tr key={rc.id}>
+                        <td>{rc.name}</td>
+                        <td>{rc.status || '—'}</td>
+                        <td>{rc.count}</td>
+                        <td>{euro(rc.omzet)}</td>
+                        <td>{euro(rc.margin)}</td>
+                        <td>{euro(Math.max(0, rc.omzet - rc.margin))}</td>
+                        <td className="text-right">
+                          <button className="btn text-xs" onClick={()=>setRoundFilter(rc.id)}>Filter</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )
+        })()
+      )}
 
       {/* KPI's voor huidig filter */}
       <div className="card mb-4">
