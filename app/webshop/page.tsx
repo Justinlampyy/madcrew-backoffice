@@ -1,19 +1,9 @@
 "use client";
 import React, { useState } from "react";
 
-type Product = {
-  id: string;
-  name: string;
-  price: number;
-  image?: string;
-};
+type Product = { id: string; name: string; price: number; image?: string };
 
-export type CartItem = {
-  id: string;
-  name: string;
-  price: number;
-  qty: number;
-};
+export type CartItem = { id: string; name: string; price: number; qty: number };
 
 const CONTACT = {
   whatsappNumber: "+31645355131",
@@ -56,13 +46,13 @@ export default function WebshopPage() {
   function addToCart(p: Product) {
     setCart((c) => {
       const found = c.find((x) => x.id === p.id);
-      if (found) return c.map((x) => x.id === p.id ? { ...x, qty: x.qty + 1 } : x);
+      if (found) return c.map((x) => (x.id === p.id ? { ...x, qty: x.qty + 1 } : x));
       return [...c, { id: p.id, name: p.name, price: p.price, qty: 1 }];
     });
   }
 
   function changeQty(id: string, qty: number) {
-    setCart((c) => c.map((x) => x.id === id ? { ...x, qty } : x).filter((x) => x.qty > 0));
+    setCart((c) => c.map((x) => (x.id === id ? { ...x, qty } : x)).filter((x) => x.qty > 0));
   }
 
   const total = cart.reduce((s, i) => s + i.price * i.qty, 0);
@@ -121,102 +111,29 @@ export default function WebshopPage() {
     </div>
   );
 }
-import React, { useMemo, useState, useEffect } from "react";
-import { db } from "@/lib/firebase";
-import {
-  addDoc,
-  collection,
-  getDocs,
-  query,
-  where,
-  serverTimestamp,
-  limit,
-} from "firebase/firestore";
+"use client";
+import React, { useState } from "react";
 
-// ==========================
-// Quick setup
-// 1) Drop this file into your Next.js app under app/webshop/page.tsx (or pages/webshop.tsx)
-// 2) Ensure Tailwind CSS is set up.
-// 3) Edit CONTACT settings below so checkout creates a WhatsApp or email message to you.
-// --- Contact settings ---
+type Product = { id: string; name: string; price: number; image?: string };
+
+export type CartItem = { id: string; name: string; price: number; qty: number };
+
 const CONTACT = {
-  // WhatsApp number in international format, digits only. Example: 31612345678 (for +31 6 ...)
-  whatsappNumber: "+31645355131", // TODO: replace with Justin's number
-  // Email address for fallback/order email
-  email: "madcrewbikers@gmail.com", // TODO: replace with your email
-  // Optional: Business name shown in messages
+  whatsappNumber: "+31645355131",
+  email: "madcrewbikers@gmail.com",
   businessName: "MadCrew Bikers",
 };
 
-// --- Product catalog ---
-// Prices include the €5 buffer as agreed (e.g., hoodie €55). Adjust as needed.
 const PRODUCTS: Product[] = [
-  {
-    id: "hoodie",
-    name: "Hoodie",
-    price: 55,
-    image: "https://placehold.co/600x600?text=Hoodie",
-  },
-  {
-    id: "pullover",
-    name: "Pull-over",
-    price: 50,
-    image: "https://placehold.co/600x600?text=Pull-over",
-  },
-  {
-    id: "tshirt-unisex",
-    name: "T-shirt (unisex/dames)",
-    price: 30,
-    image: "https://placehold.co/600x600?text=T-shirt",
-  },
-  {
-    id: "tshirt-kids",
-    name: "Kinder T-shirt",
-    price: 20,
-    image: "https://placehold.co/600x600?text=Kinder+T-shirt",
-  },
-  {
-    id: "softshell",
-    name: "Softshell jas",
-    price: 65,
-    image: "https://placehold.co/600x600?text=Softshell",
-  },
-  {
-    id: "paraplu",
-    name: "Paraplu",
-    price: 20,
-    image: "https://placehold.co/600x600?text=Paraplu",
-  },
-  {
-    id: "slippers",
-    name: "Slippers",
-    price: 15,
-    image: "https://placehold.co/600x600?text=Slippers",
-  },
+  { id: "hoodie", name: "Hoodie", price: 55 },
+  { id: "pullover", name: "Pull-over", price: 50 },
+  { id: "tshirt-unisex", name: "T-shirt (unisex/dames)", price: 30 },
+  { id: "tshirt-kids", name: "Kinder T-shirt", price: 20 },
+  { id: "softshell", name: "Softshell jas", price: 65 },
+  { id: "paraplu", name: "Paraplu", price: 20 },
+  { id: "slippers", name: "Slippers", price: 15 },
 ];
 
-// --- Types ---
-type Product = {
-  id: string;
-  name: string;
-  price: number; // EUR
-  image: string;
-};
-
-type Round = {
-  id: string;
-  name?: string;
-  status?: string; // e.g. "open" | "closed"
-};
-
-export type CartItem = {
-  id: string;
-  name: string;
-  price: number;
-  qty: number;
-};
-
-// --- Utils ---
 function formatEUR(n: number) {
   return new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(n);
 }
@@ -233,271 +150,114 @@ function toWhatsAppText(items: CartItem[], total: number) {
     "Bezorgadres of afhalen: ",
     "Speciale wensen (maat/kleur): ",
   ];
-  // Avoid any accidental newline splitting in build by using char code for line breaks
-  const msg = lines.join(String.fromCharCode(10));
-  return encodeURIComponent(msg);
-}
-
-// Message that goes to the OWNER (shop) so you can reply with a Tikkie
-function toWhatsAppOwnerText({
-  items,
-  total,
-  orderId,
-  round,
-  customer,
-}: {
-  items: CartItem[];
-  total: number;
-  orderId: string;
-  round: Round | null;
-  customer: { name: string; phone: string; deliveryMethod: string; address?: string; notes?: string };
-  // End of webshop page
-}) {
-  const lines = [
-    `Nieuwe webshop-bestelling — ${CONTACT.businessName}`,
-    `Order: ${orderId}`,
-    round?.name ? `Bestelronde: ${round.name}` : undefined,
-    "",
-    ...items.map((i) => `• ${i.name} × ${i.qty} — ${formatEUR(i.price * i.qty)}`),
-    "",
-    `Totaal: ${formatEUR(total)}`,
-    "",
-    `Klant: ${customer.name}`,
-    `Tel: ${customer.phone}`,
-    `Levering: ${customer.deliveryMethod}${customer.address ? ` — ${customer.address}` : ""}`,
-    customer.notes ? `Opmerkingen: ${customer.notes}` : undefined,
-    "",
-    "Graag Tikkie sturen en order bevestigen.",
-  ].filter(Boolean) as string[];
-  // join using newline char code to avoid accidental template literal breakage
-  const msg = lines.join(String.fromCharCode(10));
-  return encodeURIComponent(msg);
-}
-
-function toEmailBody(items: CartItem[], total: number) {
-  const lines = [
-    `Bestelling voor ${CONTACT.businessName}`,
-    "",
-    ...items.map((i) => `- ${i.name} x ${i.qty} — ${formatEUR(i.price * i.qty)}`),
-    "",
-    `Totaal: ${formatEUR(total)}`,
-    "",
-    "Naam: ",
-    "Bezorgadres of afhalen: ",
-    "Speciale wensen (maat/kleur): ",
-  ];
   return encodeURIComponent(lines.join("\n"));
 }
 
-// Persist cart in localStorage
-const CART_KEY = "madcrew-cart-v1";
-
 export default function WebshopPage() {
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [cartOpen, setCartOpen] = useState(false);
 
-  // bestelronde
-  const [activeRound, setActiveRound] = useState<Round | null>(null);
-  const [roundLoading, setRoundLoading] = useState(true);
-
-  // klantgegevens (client-side)
-  const [customerName, setCustomerName] = useState("");
-  const [customerPhone, setCustomerPhone] = useState("");
-  const [deliveryMethod, setDeliveryMethod] = useState<"afhalen" | "bezorgen">("afhalen");
-  const [address, setAddress] = useState("");
-  const [notes, setNotes] = useState("");
-
-  useEffect(() => {
-    const q = query(collection(db, "orders"), orderBy("createdAt", "desc"));
-    const unsub = onSnapshot(q, (snap) => {
-      const list = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
-      setOrders(list);
-      setTikkie((prev) => {
-        const next = { ...prev } as Record<string, string>;
-        for (const o of list) {
-          if (next[o.id] === undefined) next[o.id] = o.tikkieUrl || "";
-        }
-        return next;
-      });
+  function addToCart(p: Product) {
+    setCart((c) => {
+      const found = c.find((x) => x.id === p.id);
+      if (found) return c.map((x) => (x.id === p.id ? { ...x, qty: x.qty + 1 } : x));
+      return [...c, { id: p.id, name: p.name, price: p.price, qty: 1 }];
     });
-    return () => unsub();
-  }, []);
-
-  const filtered = useMemo(() => {
-    if (tab === "all") return orders;
-    return orders.filter((o) => (
-      tab === "pending" ? o.status === "pending" :
-      tab === "accepted" ? o.status === "accepted" :
-      o.status === "paid"
-    ));
-  }, [orders, tab]);
-
-  async function acceptOrder(o: any) {
-    try {
-      await updateDoc(doc(db, "orders", o.id), { status: "accepted", acceptedAt: new Date() as any });
-      const txt = customerAcceptText(o);
-      sendWhatsAppToCustomer(o, txt);
-    } catch (e) {
-      console.error(e);
-      alert("Akkoord zetten mislukt. Probeer het opnieuw.");
-    }
   }
 
-  async function markPaid(o: any) {
-    try {
-      await updateDoc(doc(db, "orders", o.id), { status: "paid", paidAt: new Date() as any });
-    } catch (e) {
-      console.error(e);
-      alert("Markeren als betaald mislukt.");
-    }
+  function changeQty(id: string, qty: number) {
+    setCart((c) => c.map((x) => (x.id === id ? { ...x, qty } : x)).filter((x) => x.qty > 0));
   }
 
-  async function saveTikkie(o: any) {
-    try {
-      await updateDoc(doc(db, "orders", o.id), { tikkieUrl: tikkie[o.id] || "" });
-      alert("Tikkie-link opgeslagen.");
-    } catch (e) {
-      console.error(e);
-      alert("Opslaan van Tikkie-link mislukt.");
-    }
-  }
-
-  function sendTikkie(o: any) {
-    const url = (tikkie[o.id] || o.tikkieUrl || "").trim();
-    if (!url) {
-      alert("Vul eerst de Tikkie-link in.");
-      return;
-    }
-    const name = o.customerName || "";
-    const msg = `Hoi ${name}, hierbij de Tikkie voor je MadCrew bestelling: ${url} Thanks! 🤘`;
-    sendWhatsAppToCustomer(o, msg);
-  }
-
-  function sendWhatsAppToCustomer(o: any, message: string) {
-    const phone = normalizePhone(o.customerPhone || "");
-    if (!phone) {
-      alert("Geen geldig telefoonnummer gevonden bij deze bestelling.");
-      return;
-    }
-    const href = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
-    window.open(href, "_blank");
-  }
-
-  function normalizePhone(p: string) {
-    const digits = (p || "").replace(/[^0-9]/g, "");
-    if (!digits) return "";
-    if (digits.startsWith("06")) return "31" + digits.slice(1);
-    if (digits.startsWith("6") && digits.length === 9) return "31" + digits;
-    if (digits.startsWith("31")) return digits;
-    if (digits.startsWith("+31")) return digits.replace("+", "");
-    return digits;
-  }
-
-  function customerAcceptText(o: any) {
-    const name = o.customerName || "";
-    return (
-      `Hoi ${name}! Je bestelling is geaccepteerd. ` +
-      `Je krijgt zo een Tikkie om te betalen. ` +
-      `Groet, MadCrew 🤘`
-    );
-  }
-  
+  const total = cart.reduce((s, i) => s + i.price * i.qty, 0);
 
   return (
-    // <RequireAdmin>
-    <div className="mx-auto max-w-5xl p-4">
-      <h1 className="text-2xl font-semibold">Bestellingen</h1>
-      <div className="mt-4 inline-flex rounded-2xl border p-1 text-sm">
-        {["pending", "accepted", "paid", "all"].map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t as any)}
-            className={`px-3 py-1 rounded-xl ${tab === t ? "bg-black text-white" : "hover:bg-neutral-100"}`}
-          >
-            {t === "pending" ? "Wacht op akkoord" : t === "accepted" ? "Geaccepteerd" : "Alles"}
-          </button>
+    <div className="mx-auto max-w-4xl p-6">
+      <h1 className="text-2xl font-semibold mb-4">Webshop</h1>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {PRODUCTS.map((p) => (
+          <div key={p.id} className="border rounded-lg p-4 flex flex-col">
+            <div className="flex-1">
+              <div className="font-medium">{p.name}</div>
+              <div className="text-sm text-neutral-600">{formatEUR(p.price)}</div>
+            </div>
+            <div className="mt-4">
+              <button onClick={() => addToCart(p)} className="rounded-xl bg-black text-white px-3 py-2">Voeg toe</button>
+            </div>
+          </div>
         ))}
       </div>
 
-      <div className="mt-4 border rounded-3xl overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-neutral-50 text-neutral-600">
-            <tr>
-              <th className="text-left p-3">Datum</th>
-              <th className="text-left p-3">Klant</th>
-              <th className="text-left p-3">Items</th>
-              <th className="text-right p-3">Totaal</th>
-              <th className="text-left p-3">Ronde</th>
-              <th className="text-left p-3">Tikkie</th>
-              <th className="text-right p-3">Actie</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((o) => (
-              <tr key={o.id} className="border-t">
-                <td className="p-3 align-top">{o.createdAt?.toDate ? o.createdAt.toDate().toLocaleString("nl-NL") : "—"}</td>
-                <td className="p-3 align-top">
-                  <div className="font-medium">{o.customerName}</div>
-                  <div className="text-neutral-600">{o.customerPhone}</div>
-                  {o.deliveryMethod && (
-                    <div className="text-neutral-600">{o.deliveryMethod}{o.address ? ` — ${o.address}` : ""}</div>
-                  )}
-                </td>
-                <td className="p-3 align-top">
-                  <ul className="list-disc pl-4">
-                    {(o.items || []).map((i: any, idx: number) => (
-                      <li key={idx}>{i.name} × {i.qty}</li>
-                    ))}
-                  </ul>
-                  {o.notes && <div className="text-neutral-600 mt-1">Opmerkingen: {o.notes}</div>}
-                </td>
-                <td className="p-3 text-right align-top font-semibold">{formatEUR(o.total || 0)}</td>
-                <td className="p-3 align-top">{o.roundName || o.roundId || "—"}</td>
-                <td className="p-3 align-top min-w-[260px]">
-                  <div className="flex gap-2">
-                    <input
-                      value={tikkie[o.id] ?? ""}
-                      onChange={(e) => setTikkie((m) => ({ ...m, [o.id]: e.target.value }))}
-                      placeholder="https://tikkie.me/..."
-                      className="flex-1 rounded-xl border px-3 py-2 text-sm"
-                    />
-                    <button onClick={() => saveTikkie(o)} className="rounded-xl border px-3 py-2 text-sm">Opslaan</button>
+      <div className="mt-8 border rounded-xl p-4">
+        <h2 className="font-semibold">Winkelwagen</h2>
+        {cart.length === 0 ? (
+          <div className="text-neutral-600 mt-2">Winkelwagen is leeg.</div>
+        ) : (
+          <div className="mt-2">
+            <ul className="divide-y">
+              {cart.map((i) => (
+                <li key={i.id} className="py-2 flex items-center justify-between">
+                  <div>
+                    <div className="font-medium">{i.name}</div>
+                    <div className="text-sm text-neutral-600">{formatEUR(i.price)} × {i.qty}</div>
                   </div>
-                  <div className="mt-2 flex gap-2">
-                    <button onClick={() => sendTikkie(o)} className="rounded-xl bg-black text-white px-3 py-2 text-sm">Stuur Tikkie</button>
-                    {o.status !== 'paid' && (
-                      <button onClick={() => markPaid(o)} className="rounded-xl border px-3 py-2 text-sm">Markeer betaald</button>
-                    )}
+                  <div className="flex items-center gap-2">
+                    <input type="number" min={1} value={i.qty} onChange={(e) => changeQty(i.id, Number(e.target.value) || 1)} className="w-20 rounded border px-2 py-1" />
+                    <div className="font-semibold">{formatEUR(i.price * i.qty)}</div>
                   </div>
-                </td>
-                <td className="p-3 text-right align-top">
-                  {o.status === "pending" ? (
-                    <button onClick={() => acceptOrder(o)} className="rounded-xl bg-black text-white px-3 py-2 shadow hover:shadow-md">Accepteren</button>
-                  ) : (
-                    <span className="inline-flex items-center rounded-xl border px-2 py-1">Geaccepteerd</span>
-                  )}
-                </td>
-              </tr>
-            ))}
-            {filtered.length === 0 && (
-              <tr>
-                <td colSpan={6} className="p-6 text-center text-neutral-600">Geen bestellingen in deze weergave.</td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+                </li>
+              ))}
+            </ul>
+
+            <div className="mt-4 flex items-center justify-between">
+              <div className="font-semibold">Totaal</div>
+              <div className="font-bold text-lg">{formatEUR(total)}</div>
+            </div>
+
+            <div className="mt-4 flex gap-2">
+              <a className="rounded-xl bg-green-600 text-white px-4 py-2" href={`https://wa.me/${CONTACT.whatsappNumber.replace(/\+/g, '')}?text=${toWhatsAppText(cart, total)}`} target="_blank" rel="noreferrer">Bestel via WhatsApp</a>
+              <a className="rounded-xl border px-4 py-2" href={`mailto:${CONTACT.email}?subject=Nieuwe bestelling&body=${encodeURIComponent('Totaal: ' + formatEUR(total))}`}>Bestel via e-mail</a>
+            </div>
+          </div>
+        )}
       </div>
     </div>
-    // </RequireAdmin>
   );
 }
-
-
-// ==============================
-// Admin: Rounds Page (beheer bestelrondes)
-// File: app/backoffice/rounds/page.tsx
-// ==============================
 "use client";
+import React, { useState } from "react";
+
+type Product = {
+  id: string;
+  name: string;
+  price: number;
+  image?: string;
+};
+"use client";
+import React, { useState } from "react";
+
+type Product = { id: string; name: string; price: number; image?: string };
+
+export type CartItem = { id: string; name: string; price: number; qty: number };
+
+const CONTACT = {
+  whatsappNumber: "+31645355131",
+  email: "madcrewbikers@gmail.com",
+  businessName: "MadCrew Bikers",
+
+              <div className="font-bold text-lg">{formatEUR(total)}</div>
+            </div>
+
+            <div className="mt-4 flex gap-2">
+              <a className="rounded-xl bg-green-600 text-white px-4 py-2" href={`https://wa.me/${CONTACT.whatsappNumber.replace(/\+/g, '')}?text=${toWhatsAppText(cart, total)}`} target="_blank" rel="noreferrer">Bestel via WhatsApp</a>
+              <a className="rounded-xl border px-4 py-2" href={`mailto:${CONTACT.email}?subject=Nieuwe bestelling&body=${encodeURIComponent('Totaal: ' + formatEUR(total))}`}>Bestel via e-mail</a>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 import React, { useEffect, useState } from "react";
 import { db } from "@/lib/firebase";
 import {
