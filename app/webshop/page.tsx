@@ -20,7 +20,7 @@ import {
 // --- Contact settings ---
 const CONTACT = {
   // WhatsApp number in international format, digits only. Example: 31612345678 (for +31 6 ...)
-  whatsappNumber: "31645355131", // TODO: replace with Justin's number
+  whatsappNumber: "+31645355131", // TODO: replace with Justin's number
   // Email address for fallback/order email
   email: "madcrewbikers@gmail.com", // TODO: replace with your email
   // Optional: Business name shown in messages
@@ -112,8 +112,9 @@ function toWhatsAppText(items: CartItem[], total: number) {
     "Bezorgadres of afhalen: ",
     "Speciale wensen (maat/kleur): ",
   ];
-  return encodeURIComponent(lines.join("
-"));
+  const msg = lines.join("
+");
+  return encodeURIComponent(msg);
 }
 
 // Message that goes to the OWNER (shop) so you can reply with a Tikkie
