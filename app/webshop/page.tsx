@@ -112,8 +112,8 @@ function toWhatsAppText(items: CartItem[], total: number) {
     "Bezorgadres of afhalen: ",
     "Speciale wensen (maat/kleur): ",
   ];
-  const msg = lines.join("
-");
+  // Avoid any accidental newline splitting in build by using char code for line breaks
+  const msg = lines.join(String.fromCharCode(10));
   return encodeURIComponent(msg);
 }
 
@@ -492,3 +492,4 @@ export function RoundsAdminPage() {
     </div>
   );
 }
+
