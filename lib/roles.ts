@@ -1,12 +1,14 @@
-// /lib/roles.ts
+// START region: roles allowlist
+// Hier bepaal je wie automatisch admin is bij inloggen met Google.
+// Voeg eventueel meer e-mails toe aan de lijst.
+
+const ADMIN_EMAILS = [
+  "justinlamberink@gmail.com", // <- jouw e-mailadres
+];
+
+/** Check of een e-mailadres in de admin-lijst staat */
 export function emailIsAdmin(email?: string | null): boolean {
-  if (!email) return false
-  // Lees uit public env, maar crasht nooit als die ontbreekt
-  const raw = process.env.NEXT_PUBLIC_ADMIN_EMAILS || ''
-  // Komma/; / spaties toegestaan, case-insensitive
-  const allow = raw
-    .split(/[,\n; ]+/)
-    .map(s => s.trim().toLowerCase())
-    .filter(Boolean)
-  return allow.includes(email.toLowerCase())
+  if (!email) return false;
+  return ADMIN_EMAILS.includes(email.toLowerCase());
 }
+// END region: roles allowlist
